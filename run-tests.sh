@@ -311,6 +311,62 @@ bash "$CHECKS_DIR/check-homebrew.sh" >/dev/null 2>&1; chk 2 $? "blocks brew unin
 export HOOK_TOOL_NAME="Write"; export HOOK_COMMAND="brew uninstall --force node"
 bash "$CHECKS_DIR/check-homebrew.sh" >/dev/null 2>&1; chk 0 $? "ignores non-Bash tool"
 
+# ── git-hooks/pre-push ───────────────────────────────────────────────────────
+echo ""
+echo "=== git-hooks/pre-push ==="
+
+PPHOOK="$SCRIPT_DIR/git-hooks/pre-push"
+Z="0000000000000000000000000000000000000000"
+S="1111111111111111111111111111111111111111"
+T="2222222222222222222222222222222222222222"
+RURL="git@example.com:acme/app.git"
+
+unset GUARDRAILS_ALLOW_PUSH_PROTECTED GUARDRAILS_PROTECTED_BRANCHES
+
+# stdin format: <local-ref> <local-sha> <remote-ref> <remote-sha>
+echo "refs/heads/main $S refs/heads/main $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 1 $? "blocks git push origin main"
+
+echo "refs/heads/master $S refs/heads/master $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 1 $? "blocks push to master"
+
+# the regression this guard exists for: bare `git push`, upstream is origin/main
+echo "refs/heads/feature/x $S refs/heads/main $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 1 $? "blocks bare push whose upstream is main"
+
+echo "HEAD $S refs/heads/main $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 1 $? "blocks git push origin HEAD:main"
+
+echo "(delete) $Z refs/heads/main $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 1 $? "blocks deletion of main"
+
+printf 'refs/heads/feature/x %s refs/heads/feature/x %s\nrefs/heads/feature/y %s refs/heads/main %s\n' \
+  "$S" "$T" "$S" "$T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 1 $? "blocks multi-ref push where one ref is main"
+
+echo "refs/heads/feature/x $S refs/heads/feature/x $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 0 $? "allows push to a feature branch"
+
+echo "refs/heads/maintenance $S refs/heads/maintenance $T" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 0 $? "allows branch merely prefixed with main"
+
+echo "refs/tags/v1.0.0 $S refs/tags/v1.0.0 $Z" \
+  | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 0 $? "allows tag push"
+
+printf '' | bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1; chk 0 $? "allows empty ref list"
+
+echo "refs/heads/main $S refs/heads/main $T" \
+  | GUARDRAILS_ALLOW_PUSH_PROTECTED=1 bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1
+chk 0 $? "override env allows deliberate push to main"
+
+echo "refs/heads/develop $S refs/heads/develop $T" \
+  | GUARDRAILS_PROTECTED_BRANCHES="develop" bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1
+chk 1 $? "custom protected list blocks develop"
+
+echo "refs/heads/main $S refs/heads/main $T" \
+  | GUARDRAILS_PROTECTED_BRANCHES="develop" bash "$PPHOOK" origin "$RURL" >/dev/null 2>&1
+chk 0 $? "custom protected list allows main"
+
 # ── summary ──────────────────────────────────────────────────────────────────
 echo ""
 echo "======================================="
