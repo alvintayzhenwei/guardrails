@@ -1,0 +1,7 @@
+{
+  "_updated": "2026-01-01",
+  "local_indicators": ["filesystem", "sqlite", "local", "dev", "internal"],
+  "external_indicators": ["cloud", "api", "remote", "online"],
+  "local": {},
+  "external": {}
+}

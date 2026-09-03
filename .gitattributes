@@ -1,0 +1,6 @@
+# Hook scripts are executed by bash on every platform (Git Bash / WSL on
+# Windows). CRLF breaks the shebang with "bad interpreter: ...^M", so force
+# LF on checkout regardless of the consumer's core.autocrlf setting.
+* text=auto eol=lf
+*.png binary
+*.jpg binary
