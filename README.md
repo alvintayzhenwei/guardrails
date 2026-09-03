@@ -19,10 +19,36 @@ Copy one file into your project and every Claude Code session in it is guarded.
 | `check-secrets-write.sh` | Write, Edit | Credential literals in source (passwords, API keys, private keys, bearer tokens, AWS keys) |
 | `check-no-hardcoded-paths.sh` | Write, Edit | Machine-specific absolute paths in shared `.claude/` assets |
 | `check-mcp-guardrail.sh` | `mcp__*` | Shows the outbound payload for external MCP calls before you consent |
+| `git-hooks/pre-push` | `git push` (any caller) | Pushes landing on `main`/`master` — including a bare `git push` whose upstream is `main` |
 
 A blocking check exits `2` and returns a reason, so Claude sees why it was stopped
 and can correct course. **Guardrails restrain the agent, not you** — every blocked
 command can still be run manually.
+
+## Git-level guard: pushes to `main`
+
+The checks above restrain Claude. This one restrains the `git` client itself — it
+catches a push to a protected branch no matter who or what runs it.
+
+```bash
+bash git-hooks/install.sh          # current repo
+bash git-hooks/install.sh ../app   # another repo
+powershell git-hooks/install.ps1   # Windows
+```
+
+It inspects the `<remote-ref>` git reports for each pushed ref, which git resolves
+*after* refspecs, `HEAD` and upstream tracking are expanded — so one check covers
+`git push origin main`, `git push origin HEAD:main`, `git push --delete origin
+main`, and a bare `git push` from a branch whose upstream is `main`. Tags and
+non-protected branches pass through untouched.
+
+An existing `pre-push` hook is renamed to `pre-push.local` and still runs, after
+the guard. If the repo sets `core.hooksPath`, the installer follows it there —
+otherwise the hook would be a silent no-op.
+
+This is a local safety net, not access control: `git push --no-verify` bypasses it
+and other clones do not have it. Pair it with a server-side branch protection rule
+requiring a pull request.
 
 ## Install
 
@@ -93,6 +119,8 @@ broken guardrail install — it prints a warning instead.
 | `CLAUDE_GUARDRAILS_CACHE` | `~/.claude/guardrails` | Where the auto-clone lives. |
 | `CLAUDE_GUARDRAILS_TTL` | `1440` | Cache refresh interval, in minutes. |
 | `PROD_HOST_PATTERN` | *(unset)* | Regex; when set, `check-production-guard.sh` also blocks commands mentioning a matching host. |
+| `GUARDRAILS_PROTECTED_BRANCHES` | `main master` | Space-separated, exact-match branch names the `pre-push` guard refuses. |
+| `GUARDRAILS_ALLOW_PUSH_PROTECTED` | *(unset)* | Set to `1` for one deliberate push to a protected branch: `GUARDRAILS_ALLOW_PUSH_PROTECTED=1 git push`. |
 
 ## Per-project opt-out
 
@@ -153,6 +181,7 @@ guardrails/
 ├── run-tests.sh       ← bash test suite
 ├── run-tests.ps1      ← PowerShell smoke test
 ├── checks/            ← individual guard scripts
+├── git-hooks/         ← git pre-push guard + installer
 ├── examples/          ← starter mcp-registry.json
 └── docs/design/       ← architecture notes
 ```

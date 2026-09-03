@@ -1,0 +1,112 @@
+#!/bin/bash
+# =============================================================================
+# Git pre-push guard — refuses any push that would land on a protected branch.
+#
+# Install:  bash git-hooks/install.sh [<repo-path>]
+#
+# git invokes this hook as:  pre-push <remote-name> <remote-url>
+# and feeds one line per ref being pushed on stdin:
+#     <local-ref> <local-sha> <remote-ref> <remote-sha>
+#
+# <remote-ref> is the authoritative signal: git resolves it *after* expanding
+# refspecs, HEAD and upstream tracking. One check on it covers every shape of
+# the mistake:
+#     git push origin main            explicit refspec
+#     git push origin HEAD:main       HEAD refspec
+#     git push feature:main           cross-branch refspec
+#     git push                        upstream is origin/main   <-- the gap
+#     git push --delete origin main   branch deletion
+#
+# Exit 1 aborts the entire push — no refs are sent. (Git hook convention; the
+# Claude Code checks in checks/ use exit 2.)
+# =============================================================================
+
+# guardrails-pre-push v1   <- marker: install.sh uses this to detect its own copy
+
+PROTECTED="${GUARDRAILS_PROTECTED_BRANCHES:-main master}"
+REMOTE_NAME="${1:-origin}"
+REMOTE_URL="${2:-}"
+HOOK_DIR="$(cd "$(dirname "$0")" 2>/dev/null && pwd)"
+
+is_protected() {
+  local candidate="$1" p
+  for p in $PROTECTED; do
+    [ "$candidate" = "$p" ] && return 0
+  done
+  return 1
+}
+
+# Buffer stdin so it can be replayed to a chained hook further down.
+REFS="$(cat)"
+
+BLOCKED=""
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$remote_ref" in
+    refs/heads/*) ;;
+    *) continue ;;   # tags, notes, refs/for/* — not this guard's business
+  esac
+  branch="${remote_ref#refs/heads/}"
+  is_protected "$branch" || continue
+  case " $BLOCKED " in
+    *" $branch "*) ;;
+    *) BLOCKED="${BLOCKED} ${branch}" ;;
+  esac
+done <<< "$REFS"
+
+BLOCKED="${BLOCKED# }"
+
+if [ -n "$BLOCKED" ] && [ "$GUARDRAILS_ALLOW_PUSH_PROTECTED" != "1" ]; then
+  SRC="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+  UPSTREAM="$(git rev-parse --abbrev-ref --symbolic-full-name '@{u}' 2>/dev/null)"
+  FIRST="${BLOCKED%% *}"
+
+  {
+    echo ""
+    echo "[guardrail] Push blocked — it would land directly on: $BLOCKED"
+    echo ""
+    echo "  remote:   ${REMOTE_NAME}${REMOTE_URL:+ ($REMOTE_URL)}"
+    echo "  from:     ${SRC:-<detached HEAD>}"
+    [ -n "$UPSTREAM" ] && echo "  upstream: $UPSTREAM"
+    echo ""
+    echo "  Protected branches take changes through a reviewed pull request."
+    echo ""
+
+    if [ -n "$SRC" ] && is_protected "$SRC"; then
+      echo "  You are on ${SRC}. Move the work onto a branch first:"
+      echo "      git switch -c feature/<name>"
+      echo "      git push -u ${REMOTE_NAME} feature/<name>"
+      echo "      gh pr create --base ${FIRST}"
+    else
+      echo "  Push your own branch and open a PR instead:"
+      echo "      git push -u ${REMOTE_NAME} ${SRC:-<branch>}"
+      echo "      gh pr create --base ${FIRST}"
+      if [ -n "$UPSTREAM" ] && is_protected "${UPSTREAM#*/}"; then
+        echo ""
+        echo "  Note: this branch tracks ${UPSTREAM}, which is why a bare"
+        echo "  \`git push\` aimed at ${UPSTREAM#*/} instead of ${SRC}."
+        echo "  The -u above repoints it."
+      fi
+    fi
+
+    echo ""
+    echo "  Deliberate release push? Re-run as:"
+    echo "      GUARDRAILS_ALLOW_PUSH_PROTECTED=1 git push ..."
+    echo ""
+  } >&2
+
+  exit 1
+fi
+
+# Chain to a pre-push hook that was already installed here before the guard
+# (install.sh renames it), replaying the ref list it expects on stdin.
+LOCAL_HOOK="$HOOK_DIR/pre-push.local"
+if [ -x "$LOCAL_HOOK" ]; then
+  if [ -n "$REFS" ]; then
+    printf '%s\n' "$REFS" | "$LOCAL_HOOK" "$@"
+  else
+    "$LOCAL_HOOK" "$@" < /dev/null
+  fi
+  exit $?
+fi
+
+exit 0
