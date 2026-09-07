@@ -27,7 +27,7 @@ jobs:
         # extractors; actions covers the workflows in this directory.
         language: [javascript-typescript, actions]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v3
