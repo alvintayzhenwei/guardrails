@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The hook library is bash on every platform; on Windows that is the
+      # Git Bash that ships with the runner, which is what run-hooks.ps1
+      # delegates to in real use.
+      - name: Behaviour suite
+        shell: bash
+        run: bash run-tests.sh
+
+      - name: Adversarial suite
+        shell: bash
+        run: bash run-vuln-tests.sh
+
+  powershell-launcher:
+    name: PowerShell launcher smoke test
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: run-tests.ps1
+        shell: pwsh
+        run: pwsh -File run-tests.ps1

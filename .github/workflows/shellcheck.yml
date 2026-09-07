@@ -1,0 +1,29 @@
+name: ShellCheck
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # shellcheck is preinstalled on the ubuntu runner image, so this job
+      # pulls in no third-party action.
+      - name: Version
+        run: shellcheck --version
+
+      - name: Lint all shell sources
+        run: |
+          set -euo pipefail
+          mapfile -t files < <(git ls-files '*.sh' 'git-hooks/pre-push')
+          printf 'Linting %d files\n' "${#files[@]}"
+          shellcheck --severity=warning --shell=bash --external-sources "${files[@]}"

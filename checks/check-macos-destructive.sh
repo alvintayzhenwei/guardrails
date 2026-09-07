@@ -10,13 +10,19 @@
 
 CMD="$HOOK_COMMAND"
 
-if echo "$CMD" | grep -qiE 'diskutil[[:space:]]+(eraseDisk|eraseVolume|zeroDisk|secureErase)\b'; then
+if echo "$CMD" | grep -qiE 'diskutil[[:space:]]+(eraseDisk|eraseVolume|zeroDisk|secureErase|reformat)\b'; then
   echo '{"decision":"block","reason":"[guardrail] diskutil destructive operations are blocked. Run manually if intentional."}'
   exit 2
 fi
 
+# APFS container/volume deletion erases every volume inside the container.
+if echo "$CMD" | grep -qiE 'diskutil[[:space:]]+(apfs|ap)[[:space:]]+(deleteContainer|deleteVolume|eraseVolume|eraseContainer)\b'; then
+  echo '{"decision":"block","reason":"[guardrail] diskutil apfs deleteContainer/deleteVolume is blocked — erases every volume in the container. Run manually if intentional."}'
+  exit 2
+fi
+
 if echo "$CMD" | grep -qiE '(^|[[:space:]]|/)srm[[:space:]]'; then
-  if echo "$CMD" | grep -qiE '[[:space:]]-[a-zA-Z]*[rR]'; then
+  if echo "$CMD" | grep -qiE '[[:space:]]-[a-zA-Z]*[rR][a-zA-Z]*([[:space:]]|$)|[[:space:]]--recursive([[:space:]]|=|$)'; then
     echo '{"decision":"block","reason":"[guardrail] srm -r is blocked — secure-deletes files recursively. Run manually if intentional."}'
     exit 2
   fi

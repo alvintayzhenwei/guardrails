@@ -40,6 +40,10 @@ is_protected() {
 REFS="$(cat)"
 
 BLOCKED=""
+# git's ref line has a fixed field order, so the three fields this guard does
+# not use still have to be read to reach <remote-ref>, which is the one that
+# matters (see the header comment).
+# shellcheck disable=SC2034
 while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
     refs/heads/*) ;;
