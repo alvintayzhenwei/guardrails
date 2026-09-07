@@ -19,7 +19,7 @@ eval "$(printf '%s' "$INPUT" | node -e "
       const d = JSON.parse(b);
       const t = d.tool_name || '';
       const i = d.tool_input || {};
-      const fp = (i.file_path || i.path || '').replace(/\\\\/g, '/');
+      const fp = (i.file_path || i.notebook_path || i.path || '').replace(/\\\\/g, '/');
       const cmd = i.command || '';
       process.stdout.write('HOOK_TOOL_NAME=' + JSON.stringify(t) + '\n');
       process.stdout.write('HOOK_FILE_PATH=' + JSON.stringify(fp) + '\n');
@@ -61,7 +61,10 @@ case "$HOOK_TOOL_NAME" in
     run_check "check-dangerous-git"
     run_check "check-production-guard"
     ;;
-  Write|Edit)
+  # Every write-shaped tool, not just Write|Edit. The *Edit and *Write globs
+  # mean a newly introduced file-mutating tool is guarded by default instead of
+  # silently unguarded until someone notices and adds its name here.
+  Write|Edit|MultiEdit|NotebookEdit|Update|*Edit|*Write)
     run_check "check-sensitive-files"
     run_check "check-secrets-write"
     run_check "check-no-hardcoded-paths"

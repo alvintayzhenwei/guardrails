@@ -1,38 +1,57 @@
 #!/bin/bash
 # =============================================================================
-# Check: Block writes to sensitive files
+# Check: block writes to sensitive files
 # Env: HOOK_TOOL_NAME, HOOK_FILE_PATH
+#
+# Matching is case-insensitive: macOS and Windows filesystems are, so `.ENV`
+# and `.env` are the same file and must be treated the same way.
+# Template files (.example/.sample/.template) are exempt — they exist to be
+# written, and hold placeholders rather than credentials.
 # =============================================================================
 
-[ "$HOOK_TOOL_NAME" != "Write" ] && [ "$HOOK_TOOL_NAME" != "Edit" ] && exit 0
+case "$HOOK_TOOL_NAME" in
+  Write|Edit|MultiEdit|NotebookEdit|Update|*Edit|*Write) ;;
+  *) exit 0 ;;
+esac
 
 FILE="$(basename "$HOOK_FILE_PATH")"
+LC="$(printf '%s' "$FILE" | tr '[:upper:]' '[:lower:]')"
 
-case "$FILE" in
-  .env|.env.*)
-    echo "{\"decision\":\"block\",\"reason\":\"[guardrail] Writes to environment files are blocked: $FILE. Manage .env files manually.\"}"
-    exit 2
+block() {
+  printf '{"decision":"block","reason":"[guardrail] %s: %s. %s"}\n' "$1" "$FILE" "$2"
+  exit 2
+}
+
+# ── Templates and samples are meant to be written ───────────────────────────
+case "$LC" in
+  *.example|*.sample|*.template|*.stub|*.dist|*.default) exit 0 ;;
+esac
+
+# ── Environment files ───────────────────────────────────────────────────────
+case "$LC" in
+  .env|.env.*|*.env|.envrc)
+    block 'Writes to environment files are blocked' 'Manage .env files manually.'
     ;;
 esac
 
-case "$FILE" in
-  *.pem|*.key|*.p12|*.jks|*.pfx|*.pkcs12)
-    echo "{\"decision\":\"block\",\"reason\":\"[guardrail] Writes to key/certificate files are blocked: $FILE. Manage key material manually.\"}"
-    exit 2
+# ── Key and certificate material ────────────────────────────────────────────
+case "$LC" in
+  *.pem|*.key|*.p12|*.jks|*.pfx|*.pkcs12|*.ppk|*.kdbx|*.asc|*.gpg|*.keystore)
+    block 'Writes to key/certificate files are blocked' 'Manage key material manually.'
     ;;
 esac
 
-case "$FILE" in
-  credentials.json|secrets.json|keystore.*|secret.properties)
-    echo "{\"decision\":\"block\",\"reason\":\"[guardrail] Writes to credential files are blocked: $FILE. Manage this file manually.\"}"
-    exit 2
+# ── Credential stores ───────────────────────────────────────────────────────
+case "$LC" in
+  credentials|credentials.json|secrets.json|secrets.yaml|secrets.yml|keystore.*|secret.properties|.netrc|_netrc|.git-credentials|.npmrc|.pypirc|.htpasswd|.dockercfg|.docker-config.json)
+    block 'Writes to credential files are blocked' 'Manage this file manually.'
     ;;
 esac
 
-case "$FILE" in
+# ── SSH private keys ────────────────────────────────────────────────────────
+case "$LC" in
   *id_rsa*|*id_ed25519*|*id_ecdsa*|*id_dsa*)
-    echo "{\"decision\":\"block\",\"reason\":\"[guardrail] Writes to SSH private key files are blocked: $FILE. Manage key files manually.\"}"
-    exit 2
+    block 'Writes to SSH private key files are blocked' 'Manage key files manually.'
     ;;
 esac
 

@@ -1,23 +1,56 @@
 # Claude Code Guardrails
 
-Safety hooks for [Claude Code](https://claude.com/claude-code). Blocks destructive
-shell commands, credential leaks, and unreviewed external MCP calls — in any
-project, on macOS, Linux, or Windows.
+[![release](https://img.shields.io/github/v/tag/alvintayzhenwei/guardrails?label=release&sort=semver&color=fe7d37)](https://github.com/alvintayzhenwei/guardrails/tags)
+[![CI](https://github.com/alvintayzhenwei/guardrails/actions/workflows/ci.yml/badge.svg)](https://github.com/alvintayzhenwei/guardrails/actions/workflows/ci.yml)
+[![ShellCheck](https://github.com/alvintayzhenwei/guardrails/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/alvintayzhenwei/guardrails/actions/workflows/shellcheck.yml)
+[![Audit](https://github.com/alvintayzhenwei/guardrails/actions/workflows/audit.yml/badge.svg)](https://github.com/alvintayzhenwei/guardrails/actions/workflows/audit.yml)
+[![CodeQL](https://github.com/alvintayzhenwei/guardrails/actions/workflows/codeql.yml/badge.svg)](https://github.com/alvintayzhenwei/guardrails/actions/workflows/codeql.yml)
+[![bypass tests](https://img.shields.io/badge/bypass%20tests-149%20passing-brightgreen)](run-vuln-tests.sh)
+[![license: MIT](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-Copy one file into your project and every Claude Code session in it is guarded.
+Safety hooks for [Claude Code](https://claude.com/claude-code). Designed to
+refuse destructive shell commands, credential writes, and unreviewed external
+MCP calls — in any project, on macOS, Linux, or Windows.
 
-## What it blocks
+Copy one file into your project and these checks run on every Claude Code tool
+call in it.
 
-| Check | Trigger | Blocks |
+> [!IMPORTANT]
+> **This is one layer of defence, not a solution, and it is not foolproof.**
+> It is pattern matching over the text of a tool call — useful against an agent
+> making a mistake, and no substitute for backups, server-side branch
+> protection, or reviewing what an agent does. It will not catch everything and
+> is not intended to. If it cannot load, it **fails open and your session runs
+> unprotected** — so the absence of a block never means a command was checked
+> and approved.
+>
+> Provided "as is", with no warranty and no liability, under the
+> [MIT License](LICENSE). Read [DISCLAIMER.md](DISCLAIMER.md) before relying on
+> it for anything you cannot afford to lose.
+
+**Don't trust it — check it.** This tool asks for a hook on every tool call in
+your project, so it should have to earn that. `bash run-vuln-tests.sh` runs 149
+offline evasion attempts against the guards and tells you which ones got
+through. [SECURITY.md](SECURITY.md) states plainly what the guards do *not*
+defend against.
+
+## What it is designed to refuse
+
+The patterns below are what the checks look for. The list is **not exhaustive of
+destructive commands** — it is exhaustive of what these checks recognise. Any
+spelling not listed, and anything the shell only assembles at run time, passes
+through.
+
+| Check | Trigger | Patterns it refuses |
 |---|---|---|
-| `check-rm-rf.sh` | Bash, PowerShell | `rm -rf` and flag variants; `Remove-Item -Recurse -Force` and short forms; `rmdir /S /Q` |
-| `check-dangerous-git.sh` | Bash, PowerShell | `git push`, `reset --hard`, `branch -D`, `clean -f`, `checkout -- .` |
-| `check-production-guard.sh` | Bash, PowerShell | `DROP TABLE`, `TRUNCATE`, `DELETE`/`UPDATE` without `WHERE` |
-| `check-macos-destructive.sh` | Bash | `diskutil eraseDisk`/`eraseVolume`/`zeroDisk`/`secureErase`, `srm -r`, `launchctl bootout system/`, bare `defaults delete` |
+| `check-rm-rf.sh` | Bash, PowerShell | `rm -rf` in the spellings listed here — combined, separate, uppercase `-R`, GNU `--recursive --force`; `find -delete`; `Remove-Item -Recurse -Force` and its `ri`/`rd`/`rmdir`/`del`/`erase` aliases; `rmdir /S /Q` |
+| `check-dangerous-git.sh` | Bash, PowerShell | `git push`, `reset --hard`, `branch -D`, `clean -f`, `checkout .`, `restore`, `stash drop`/`clear`, `reflog expire`, `update-ref -d` — matched through git's global options, so `git -c … push` is caught too |
+| `check-production-guard.sh` | Bash, PowerShell | `DROP TABLE`/`DATABASE`/`SCHEMA`, `TRUNCATE`, `DELETE`/`UPDATE` without a row-narrowing `WHERE` (a tautological `WHERE 1=1` does not count) |
+| `check-macos-destructive.sh` | Bash | `diskutil eraseDisk`/`eraseVolume`/`zeroDisk`/`secureErase`/`apfs deleteContainer`, `srm -r`, `launchctl bootout system/`, bare `defaults delete` |
 | `check-homebrew.sh` | Bash | `brew uninstall --force`, `brew rm --force`, `brew cleanup --prune=all` |
-| `check-sensitive-files.sh` | Write, Edit | Writes to `.env`, `*.pem`, `*.key`, `*.p12`, `credentials.json`, SSH keys |
-| `check-secrets-write.sh` | Write, Edit | Credential literals in source (passwords, API keys, private keys, bearer tokens, AWS keys) |
-| `check-no-hardcoded-paths.sh` | Write, Edit | Machine-specific absolute paths in shared `.claude/` assets |
+| `check-sensitive-files.sh` | any write tool | Writes to `.env`, `.envrc`, `*.pem`, `*.key`, `*.p12`, `*.ppk`, `credentials`, `.netrc`, `.npmrc`, `.git-credentials`, SSH keys — case-insensitively, since macOS and Windows filesystems are |
+| `check-secrets-write.sh` | any write tool | Credential literals in source: password/secret assignments plus AWS, GitHub, Slack, Google, Stripe, GitLab, npm, OpenAI and Anthropic token formats, and private key blocks |
+| `check-no-hardcoded-paths.sh` | any write tool | Machine-specific absolute paths in shared `.claude/` assets |
 | `check-mcp-guardrail.sh` | `mcp__*` | Shows the outbound payload for external MCP calls before you consent |
 | `git-hooks/pre-push` | `git push` (any caller) | Pushes landing on `main`/`master` — including a bare `git push` whose upstream is `main` |
 
@@ -25,10 +58,16 @@ A blocking check exits `2` and returns a reason, so Claude sees why it was stopp
 and can correct course. **Guardrails restrain the agent, not you** — every blocked
 command can still be run manually.
 
+"Any write tool" is literal: the dispatcher routes `Write`, `Edit`, `MultiEdit`,
+`NotebookEdit` and anything else matching `*Edit`/`*Write`, so a newly
+introduced file-mutating tool is guarded by default rather than silently
+unguarded until someone adds its name.
+
 ## Git-level guard: pushes to `main`
 
 The checks above restrain Claude. This one restrains the `git` client itself — it
-catches a push to a protected branch no matter who or what runs it.
+catches a push to a protected branch whichever caller runs it, unless that caller
+skips hooks (see the caveat below).
 
 ```bash
 bash git-hooks/install.sh          # current repo
@@ -163,11 +202,45 @@ the file on the next tool call.
 ## Running the tests
 
 ```bash
-bash run-tests.sh      # full suite — all checks, all platforms
-pwsh run-tests.ps1     # Windows launcher smoke test
+bash run-tests.sh        # 95 assertions  — do the guards fire as documented?
+bash run-vuln-tests.sh   # 149 assertions — can the same effect get past them?
+pwsh run-tests.ps1       # Windows launcher smoke test
 ```
 
-Exit `0` means every case passed.
+Exit `0` means every case passed. Both suites are offline and take seconds.
+
+### The adversarial suite
+
+`run-tests.sh` asks whether each guard fires on its documented pattern.
+`run-vuln-tests.sh` asks the harder question: **can the same destructive effect
+get past it anyway?** Every case in it is an evasion attempt, grouped by attack
+class — flag obfuscation, binary indirection, command chaining, alias
+substitution, case tricks, tautological SQL, exemption abuse, and tool-name
+evasion.
+
+Cases that expect exit `0` are **documented non-goals**, not gaps waiting to be
+fixed: a static text guard cannot resolve a flag the shell will only assemble at
+run time. They are pinned in the suite so the boundary is recorded rather than
+assumed, and explained in [SECURITY.md](SECURITY.md#threat-model).
+
+Written against the guards as they stood, the suite found 65 successful evasions
+and three cases of the opposite problem — guards blocking legitimate commands
+(`git branch -d` on a merged branch, `grep "DROP TABLE"`, writing
+`.env.example`). All are closed. If you find a 66th,
+[SECURITY.md](SECURITY.md#reporting-a-vulnerability) has the reporting path.
+
+## Security
+
+- **What it does and does not defend against:** [SECURITY.md](SECURITY.md) — the
+  threat model, and five explicit out-of-scope items including the loader's
+  deliberate fail-open behaviour.
+- **Reporting a bypass:** privately, via GitHub Security Advisories on this
+  repository. Please not a public issue.
+- **What runs on every change:** the behaviour suite and the adversarial suite
+  on Linux, macOS and Windows (CI); ShellCheck; CodeQL over the JavaScript and
+  the workflows themselves; and an audit job that runs `check-secrets-write`
+  against this repo's own tree, asserts no guard script touches the network, and
+  fails if the bypass-test badge above disagrees with the real assertion count.
 
 ## Repo layout
 
@@ -178,11 +251,15 @@ guardrails/
 ├── pre-tool-use.sh    ← dispatches PreToolUse checks
 ├── post-tool-use.sh   ← dispatches PostToolUse checks (MCP auto-classify)
 ├── mcp-classify.js    ← MCP classification engine
-├── run-tests.sh       ← bash test suite
+├── run-tests.sh       ← behaviour suite: do the guards fire as documented?
+├── run-vuln-tests.sh  ← adversarial suite: can anything get past them?
 ├── run-tests.ps1      ← PowerShell smoke test
+├── SECURITY.md        ← threat model, non-goals, disclosure policy
+├── DISCLAIMER.md      ← no warranty, no liability, limits of the approach
 ├── checks/            ← individual guard scripts
 ├── git-hooks/         ← git pre-push guard + installer
 ├── examples/          ← starter mcp-registry.json
+├── .github/workflows/ ← CI, ShellCheck, Audit, CodeQL
 └── docs/design/       ← architecture notes
 ```
 
@@ -191,6 +268,32 @@ guardrails/
 Push to `main`. Machines using the per-user cache pick up changes on the next
 Claude Code session after the TTL expires (24h by default).
 
+## Disclaimer
+
+**No warranty. No liability. One layer of defence, not a solution.**
+
+This software is pattern matching over the text of a tool call. It will not
+catch every destructive command and is not intended to; it is not a sandbox, an
+access-control system, a backup, or a substitute for reviewing what an agent
+does. If the library cannot load it **fails open and your session runs with no
+protection**, so the absence of a block never means a command was checked and
+approved. Green badges and a passing 149-case adversarial suite mean those
+recorded cases behaved as recorded — not that no bypass exists.
+
+You remain responsible for your own backups, branch protection, credential
+hygiene, and for deciding whether this software suits your environment. The
+entire risk of using it is yours.
+
+Full terms: **[DISCLAIMER.md](DISCLAIMER.md)** — please read it before relying
+on this for anything you cannot afford to lose.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). The MIT text governs your use of this software,
+including its warranty disclaimer and limitation of liability:
+
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND … IN NO EVENT
+> SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR
+> OTHER LIABILITY …
+
+Not affiliated with Anthropic. "Claude" and "Claude Code" are their products.

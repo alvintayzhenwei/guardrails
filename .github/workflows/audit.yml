@@ -1,0 +1,147 @@
+name: Audit
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Weekly, so a newly published secret pattern or advisory is caught even
+    # when nothing in the repo changed.
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    env:
+      GITLEAKS_VERSION: 8.30.1
+      GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
+    steps:
+      - uses: actions/checkout@v4
+
+      # Pinned binary rather than a marketplace action, for three reasons that
+      # matter in a repo like this one: the version is known, so a scan can be
+      # reproduced exactly on a developer's machine; the download is checksum
+      # verified, so the supply chain is one release asset rather than an action
+      # that resolves at run time; and the job needs no write token, so nothing
+      # here can comment, label or push.
+      - name: Install gitleaks (pinned, checksum verified)
+        run: |
+          set -euo pipefail
+          url="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl -sSfL -o gitleaks.tar.gz "$url"
+          echo "${GITLEAKS_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar xzf gitleaks.tar.gz gitleaks
+          ./gitleaks version
+
+      # `dir` scans the tree as it would be merged, which is the state that
+      # matters for a pull request and needs no commit-range arithmetic.
+      # Secrets that entered and left the history are covered server-side by
+      # GitHub push protection and secret scanning, not here.
+      - name: Scan working tree
+        run: ./gitleaks dir . --redact --verbose --no-banner
+
+      - name: Remove scanner before any later step
+        if: always()
+        run: rm -f gitleaks gitleaks.tar.gz
+
+  dogfood:
+    name: Guards run against this repo
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The credential check is pointed at every tracked file in this repo. A
+      # guardrail that would flag its own source is not one to trust.
+      - name: Credential check against own tree
+        run: |
+          set -euo pipefail
+          fail=0
+          while IFS= read -r f; do
+            case "$f" in
+              run-tests.sh|run-vuln-tests.sh|examples/*|docs/*) continue ;;
+            esac
+            payload=$(node -e '
+              const fs = require("fs");
+              const p = process.argv[1];
+              process.stdout.write(JSON.stringify({
+                tool_name: "Write",
+                tool_input: { file_path: p, content: fs.readFileSync(p, "utf8") }
+              }));
+            ' "$f")
+            HOOK_TOOL_NAME=Write HOOK_FILE_PATH="$f" HOOK_INPUT_JSON="$payload" \
+              bash checks/check-secrets-write.sh >/dev/null 2>&1 || {
+                echo "::error file=$f::check-secrets-write flagged a credential literal in a tracked file"
+                fail=1
+              }
+          done < <(git ls-files '*.sh' '*.js' '*.json' '*.md' '*.ps1')
+          exit "$fail"
+
+  no-egress:
+    name: No network egress in guards
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A hook runs on every tool call in someone else's project. The check
+      # scripts must never phone home; only run-hooks.sh may reach the network,
+      # and only to clone the library itself.
+      - name: Assert guards make no network calls
+        run: |
+          set -euo pipefail
+          if grep -nE 'curl|wget|/dev/tcp|nc[[:space:]]|openssl s_client|https?://' \
+               checks/*.sh pre-tool-use.sh post-tool-use.sh mcp-classify.js; then
+            echo "::error::a guard script references the network"
+            exit 1
+          fi
+          echo "No network references in guard scripts."
+
+  lint-workflows:
+    name: actionlint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: actionlint
+        uses: docker://rhysd/actionlint:1.7.7
+        with:
+          args: -color
+
+  badge-accuracy:
+    name: README badge accuracy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # The bypass-test badge in the README states a number. This job is what
+      # keeps that number from becoming a claim nobody checks.
+      - name: Badge count matches the suite
+        run: |
+          set -euo pipefail
+          actual=$(bash run-vuln-tests.sh --count)
+          # sed, not a second grep: the %20 escapes in the badge URL are digits
+          # too, so "first number on the line" is the wrong number.
+          claimed=$(grep -oE 'bypass%20tests-[0-9]+%20passing' README.md \
+            | sed -E 's/^bypass%20tests-([0-9]+)%20passing$/\1/' | head -1)
+          if [ -z "$claimed" ]; then
+            echo "::error file=README.md::bypass-tests badge not found in README"
+            exit 1
+          fi
+          if [ "$actual" != "$claimed" ]; then
+            echo "::error file=README.md::badge claims $claimed bypass tests, suite has $actual"
+            echo "Update the badge URL in README.md to bypass%20tests-${actual}%20passing"
+            exit 1
+          fi
+          echo "Badge and suite agree: $actual assertions."
