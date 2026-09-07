@@ -1,0 +1,38 @@
+# gitleaks configuration
+#
+# This file NARROWS the default ruleset; it does not replace it. Every default
+# gitleaks rule stays active on every file in the repository except the two
+# named below.
+#
+# Why an allowlist exists at all: run-tests.sh and run-vuln-tests.sh exist to
+# prove that the credential guards in checks/ actually fire. Proving that
+# requires fixtures shaped like real credentials, so any secret scanner pointed
+# at those two files reports findings by design. That is the intended content of
+# a secret-detection test suite, not a leak.
+#
+# What keeps this honest:
+#   1. The allowlist is scoped by path to exactly those two files. Nothing else
+#      in the repo is exempt.
+#   2. The audit workflow's `dogfood` job independently runs this repo's own
+#      check-secrets-write over every other tracked file, so the guards are
+#      still held to their own standard.
+#   3. Provider-format fixtures in run-vuln-tests.sh are additionally assembled
+#      at run time from fragments (see frag() there), so no contiguous token
+#      literal exists in the file even for scanners this config cannot reach --
+#      GitHub push protection being the one that matters, since it rejects a
+#      push outright and is not configurable from the repository.
+#
+# If you are adding a fixture: prefer frag() over an allowlist entry, and never
+# widen these paths to cover non-test files.
+
+title = "claude-code-guardrails"
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Credential fixtures in the secret-detection test suites"
+paths = [
+  '''(^|/)run-vuln-tests\.sh$''',
+  '''(^|/)run-tests\.sh$''',
+]

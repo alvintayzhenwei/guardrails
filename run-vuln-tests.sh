@@ -271,6 +271,7 @@ GOOGLE_KEY=$(frag 'AIza' 'SyA1234567890' 'abcdefghijklmnopqrstu')
 STRIPE_KEY=$(frag 'sk' '_live_' '1234567890abcdefghijklmn')
 PGP_BLOCK=$(frag '-----BEGIN ' 'PGP PRIVATE KEY BLOCK' '-----')
 PK_BLOCK=$(frag '-----BEGIN ' 'PRIVATE KEY' '-----')
+GENERIC_KEY=$(frag 'abcdef' '1234567890')
 
 write_probe 2 check-secrets-write '/proj/cfg.py' 'password = "hunter2xyz"' 'quoted password literal'
 write_probe 2 check-secrets-write '/proj/cfg.sh' 'DB_PASSWORD=hunter2xyz' 'unquoted password assignment'
@@ -282,7 +283,7 @@ write_probe 2 check-secrets-write '/proj/cfg.py' "k = \"$STRIPE_KEY\"" 'Stripe l
 write_probe 2 check-secrets-write '/proj/k.txt' "$PGP_BLOCK" 'PGP private key block'
 write_probe 2 check-secrets-write '/proj/k.txt' "$PK_BLOCK" 'unlabelled private key block'
 write_probe 2 check-secrets-write '/proj/cfg.py' "AWS_KEY = \"$AWS_PERM\"" 'AKIA AWS key still blocked'
-edit_probe 2 check-secrets-write '/proj/cfg.py' 'api_key = "abcdef1234567890"' 'Edit new_string scanned'
+edit_probe 2 check-secrets-write '/proj/cfg.py' "api_key = \"$GENERIC_KEY\"" 'Edit new_string scanned'
 
 # -----------------------------------------------------------------------------
 section "D3. Secret literals -- exemption abuse"
