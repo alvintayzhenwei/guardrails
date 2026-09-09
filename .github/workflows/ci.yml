@@ -9,9 +9,15 @@ on:
 permissions:
   contents: read
 
+# Superseding a run is right on a pull request -- only the newest commit's
+# result matters there. It is wrong on main: every commit that lands needs its
+# own verdict, and the README badges report the latest run on the default
+# branch, so a cancelled run there reads as "unverified" for the whole repo.
+# Three Dependabot merges 24 seconds apart cancelled two main runs before this
+# condition existed.
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
   test:
